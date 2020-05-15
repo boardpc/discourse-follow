@@ -1,0 +1,34 @@
+pl_PL:
+  js:
+    filters:
+      following:
+        title: "Obserwowani"
+        help: "tematy z postami użytkowników, których obserwujesz"
+    notifications:
+      following: "<span>{{username}}</span> {{description}}"
+      following_description: "zaczął Cię obserwować."
+      following_posted: "<span>{{username}}</span> {{description}}"
+      following_replied: "<span>{{username}}</span> {{description}}"
+      popup:
+        following: "{{username}} zaczął Cię obserwować."
+        following_posted: '{{username}} napisał w "{{topic}}" - {{site_title}}'
+        following_replied: '{{username}} odpowiedział w "{{topic}}" - {{site_title}}'
+
+    topics:
+      none:
+        following: "Brak tematów od obserwowanych użytkowników."
+      bottom:
+        following: "Nie ma więcej tematów od użytkowników, których obserwujesz."
+    user:
+      follow_nav: "Śledzik"
+      follow:
+        label: "Obserwuj"
+      following:
+        label: "Obserwowany"
+        none: "Nikogo jeszcze nie obserwujesz."
+        none_other: "Nikt jeszcze nie obserwuje {{username}}."
+      followers:
+        label: "Obserwujący"
+        none: "Nikt Cię jeszcze nie obserwuje."
+        none_other: "Nikt jeszcze nie obserwuje {{username}}."
+
