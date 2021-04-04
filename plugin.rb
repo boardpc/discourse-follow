@@ -11,6 +11,7 @@ register_asset 'stylesheets/mobile/follow.scss', :mobile
 
 if respond_to?(:register_svg_icon)
   register_svg_icon "user-friends"
+  register_svg_icon "user-check"
 end
 
 Discourse.top_menu_items.push(:following)
@@ -69,15 +70,65 @@ after_initialize do
         )", @user.following_ids)
     end
   end
-  
+
+  public_user_custom_fields_setting = SiteSetting.public_user_custom_fields
+  if public_user_custom_fields_setting.empty?
+    SiteSetting.set("public_user_custom_fields", "followers|following")
+  else
+    if public_user_custom_fields_setting !~ /followers/
+      SiteSetting.set(
+        "public_user_custom_fields",
+        [SiteSetting.public_user_custom_fields, "followers"].join("|"),
+      )
+    end
+    if public_user_custom_fields_setting !~ /following/
+      SiteSetting.set(
+        "public_user_custom_fields",
+        [SiteSetting.public_user_custom_fields, "following"].join("|"),
+      )
+    end
+  end
+
   add_to_serializer(:current_user, :total_following) { object.following.length }
-  add_to_serializer(:user, :following) { object.followers.include?(scope.current_user.id.to_s) }
+  add_to_serializer(:user_card, :following) { scope.current_user && SiteSetting.discourse_follow_enabled ? object.followers.include?(scope.current_user.id.to_s) : "" }
   add_to_serializer(:user, :include_following?) { scope.current_user }
-  add_to_serializer(:user, :total_followers) { object.followers.length }
+  add_to_serializer(:user, :total_followers) { SiteSetting.discourse_follow_enabled ? object.followers.length : 0}
+  add_to_serializer(:user_card, :total_followers) { SiteSetting.discourse_follow_enabled ? object.followers.length : 0}
   add_to_serializer(:user, :include_total_followers?) { SiteSetting.follow_show_statistics_on_profile }
-  add_to_serializer(:user, :total_following) { object.following.length }
+  add_to_serializer(:user, :total_following) { SiteSetting.discourse_follow_enabled ? object.following.length : 0}
+  add_to_serializer(:user_card, :total_following) { SiteSetting.discourse_follow_enabled ? object.following.length : 0}
   add_to_serializer(:user, :include_total_following?) { SiteSetting.follow_show_statistics_on_profile }
+  add_to_serializer(:user, :can_see_following) { can_see_follow_type("following") }
+  add_to_serializer(:user, :can_see_followers) { can_see_follow_type("followers") }
+  add_to_serializer(:user, :can_see_follow) {
+    can_see_following || can_see_followers
+  }
   
+  add_to_class(:user_serializer, :can_see_follow_type) do |type|
+    allowed = SiteSetting.try("follow_#{type}_visible") || nil
+    (allowed == 'self' && scope.current_user && object.id == scope.current_user.id) || allowed == 'all'
+  end
+  
+  %w[
+    notify_me_when_followed
+    notify_followed_user_when_followed
+    notify_me_when_followed_replies
+    notify_me_when_followed_posts
+  ].each do |field|
+    User.register_custom_field_type(field, :boolean)
+    DiscoursePluginRegistry.serialized_current_user_fields << field
+    # default options to true if not set by user
+    add_to_class(:user, field.to_sym) do
+      if custom_fields[field] != nil
+        custom_fields[field]
+      else
+        true
+      end
+    end
+    add_to_serializer(:user, field.to_sym)  {object.send(field)}
+    register_editable_user_custom_field field.to_sym
+  end
+
   #### Non-Api Monkey patches
   
   ## User Destroyer
@@ -86,13 +137,13 @@ after_initialize do
   module UserDestroyerFollowerExtension
     protected def prepare_for_destroy(user)
       user.following_ids.each do |user_id|
-        if following = User.find(user_id)
+        if following = User.find_by(id: user_id)
           updater = Follow::Updater.new(user, following)
           updater.update(false)
         end
       end
       user.followers.each do |user_id|
-        if follower = User.find(user_id)
+        if follower = User.find_by(id: user_id)
           updater = Follow::Updater.new(follower, user)
           updater.update(false)
         end
@@ -114,24 +165,31 @@ after_initialize do
 
       if new_record && !post.topic.private_message?
         notified = [*notified_users[post.id]]
-        followers = post.is_first_post? ? author_posted_followers(post) : author_replied_followers(post)
+        followers = SiteSetting.follow_notifications_enabled ? post.is_first_post? ? author_posted_followers(post) : author_replied_followers(post) : []
         type = post.is_first_post? ? :following_posted : :following_replied
-        notify_users(followers - notified, type, post)
+        notify_users((followers || []) - notified, type, post)
       end
     end
 
     def author_posted_followers(post)
       User.find(post.user_id).followers.map do |user_id|
-        User.find(user_id)
-      end
+        unless (user = User.find_by(id: user_id)) && user.notify_me_when_followed_posts
+          user = nil
+        end
+        user
+      end.reject(&:nil?)
     end
 
     def author_replied_followers(post)
       User.find(post.user_id).followers.reduce([]) do |users, user_id|
-        user = User.find(user_id)
-        following = user.following.select { |data| data[0] == post.user_id }
+        unless (user = User.find_by(id: user_id)) && user.notify_me_when_followed_replies
+          user = nil
+        end
+        following = user ? user.following.select { |data| data[0] == post.user_id } : nil
         if following && following.last.to_i == Follow::Notification.levels[:watching]
           users.push(user)
+        else
+          users
         end
       end
     end
